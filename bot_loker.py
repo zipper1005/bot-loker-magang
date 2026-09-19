@@ -4,8 +4,8 @@ import time
 import requests
 from google import genai
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
+FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN", "").strip()
 ID_GRUP_WA = "120363414007391391@g.us"
 NTFY_TOPIC = "Pengingat-Tugas"
 
@@ -16,7 +16,7 @@ def cari_loker_linkedin():
     params = {
         "keywords": "Internship Junior Auditor Tax Accounting",
         "location": "Greater Jakarta Area, Indonesia",
-        "f_TPR": "r86400",  # 24 jam terakhir
+        "f_TPR": "r86400",
         "start": 0
     }
     headers = {
@@ -26,11 +26,10 @@ def cari_loker_linkedin():
         resp = requests.get(url, params=params, headers=headers, timeout=15)
         html = resp.text
         
-        # Ekstrak Job ID dan judul secara langsung dari tag HTML LinkedIn
-        daftar_loker = []
         pattern = r'jobPosting:(\d+)'
         job_ids = list(dict.fromkeys(re.findall(pattern, html)))
         
+        daftar_loker = []
         for jid in job_ids[:10]:
             link = f"https://www.linkedin.com/jobs/view/{jid}"
             daftar_loker.append(f"- ID: {jid} | Link: {link}")
@@ -50,13 +49,13 @@ def kurasi_loker(html_mentah, daftar_link):
 
     Tugasmu:
     1. Saring lowongan khusus MAGANG/INTERN: Junior Auditor, Tax Intern, Accounting Staff di Indonesia (khususnya Jabodetabek).
-    2. Cocokkan posisi dan perusahaan dengan daftar tautan LinkedIn di atas.
-    3. Sajikan daftar rapi:
+    2. Cocokkan posisi dan perusahaan dengan tautan LinkedIn di atas.
+    3. Sajikan daftar rapi siap kirim ke WhatsApp:
        *Posisi*: ...
        *Perusahaan / KAP*: ...
        *Lokasi*: ...
        *Link Lamaran*: (wajib sertakan link https://www.linkedin.com/jobs/view/... yang sesuai)
-    4. Jika belum ada loker yang cocok pada batch ini, tulis:
+    4. Jika belum ada loker yang cocok pada batch 24 jam ini, tulis:
        "Belum ada update lowongan magang Audit & Tax baru untuk wilayah Jabodetabek pada sesi ini."
     """
 
@@ -69,10 +68,10 @@ def kurasi_loker(html_mentah, daftar_link):
             )
             return response.text
         except Exception as e:
-            print(f"Model {model_name} sibuk ({e}), mencoba model lain...")
+            print(f"Model {model_name} kendala: {e}, mencoba model cadangan...")
             time.sleep(2)
             
-    return "Server AI sedang sibuk sementara. Pengecekan akan diulang pada jadwal berikutnya."
+    return "Server AI sedang sibuk sementara. Pengecekan akan diulang otomatis pada jadwal berikutnya."
 
 def main():
     print("Mencari lowongan magang terbaru...")
@@ -83,16 +82,18 @@ def main():
     
     # 1. Kirim ke WhatsApp
     try:
+        clean_token = FONNTE_TOKEN.strip()
         res_wa = requests.post(
             "https://api.fonnte.com/send",
-            headers={"Authorization": FONNTE_TOKEN},
-            data={"target": ID_GRUP_WA, "message": pesan_wa}
+            headers={"Authorization": clean_token},
+            data={"target": ID_GRUP_WA, "message": pesan_wa},
+            timeout=15
         )
         print("Respon Fonnte WA:", res_wa.text)
     except Exception as e:
         print("Error WA:", e)
 
-    # 2. Kirim ke ntfy HP lengkap dengan isi dan tautannya
+    # 2. Kirim ke ntfy HP
     try:
         requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
@@ -101,7 +102,8 @@ def main():
                 "Title": "📢 Loker Magang Audit & Tax".encode("utf-8"),
                 "Priority": "default",
                 "Tags": "briefcase"
-            }
+            },
+            timeout=15
         )
         print("Terkirim ke ntfy!")
     except Exception as e:

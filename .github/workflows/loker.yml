@@ -20,7 +20,7 @@ jobs:
 
       - name: Install Paket
         run: |
-          pip install requests google-genai
+          pip install requests google-genai pillow
 
       - name: Jalankan Script Bot
         env:

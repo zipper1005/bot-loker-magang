@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import requests
 from google import genai
@@ -11,12 +12,11 @@ NTFY_TOPIC = "Pengingat-Tugas"
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def cari_loker_linkedin():
-    # Khusus mencari kata kunci magang audit & tax di wilayah Jabodetabek / Jakarta
     url = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
     params = {
         "keywords": "Internship Junior Auditor Tax Accounting",
         "location": "Greater Jakarta Area, Indonesia",
-        "f_TPR": "r86400",  # Lowongan 24 jam terakhir
+        "f_TPR": "r86400",  # 24 jam terakhir
         "start": 0
     }
     headers = {
@@ -24,34 +24,42 @@ def cari_loker_linkedin():
     }
     try:
         resp = requests.get(url, params=params, headers=headers, timeout=15)
-        return resp.text
+        html = resp.text
+        
+        # Ekstrak Job ID dan judul secara langsung dari tag HTML LinkedIn
+        daftar_loker = []
+        pattern = r'jobPosting:(\d+)'
+        job_ids = list(dict.fromkeys(re.findall(pattern, html)))
+        
+        for jid in job_ids[:10]:
+            link = f"https://www.linkedin.com/jobs/view/{jid}"
+            daftar_loker.append(f"- ID: {jid} | Link: {link}")
+            
+        return html, "\n".join(daftar_loker)
     except Exception as e:
-        return f"Gagal mengambil lowongan: {e}"
+        return "", f"Error scraping: {e}"
 
-def kurasi_loker(data_mentah):
+def kurasi_loker(html_mentah, daftar_link):
     prompt = f"""
-    Kamu adalah asisten karir mahasiswa akuntansi. 
-    Analisis data mentah lowongan kerja dari LinkedIn berikut:
-    \"\"\"{data_mentah[:7000]}\"\"\"
+    Kamu adalah asisten karir akuntansi & perpajakan.
+    Berikut adalah cuplikan data lowongan dari LinkedIn:
+    \"\"\"{html_mentah[:6000]}\"\"\"
 
-    ATURAN KETAT:
-    1. HANYA ambil lowongan kerja di wilayah INDONESIA, diutamakan area JABODETABEK (Jakarta, Bogor, Depok, Tangerang, Bekasi, atau Remote Indonesia).
-    2. Posisi KHUSUS MAGANG / INTERNSHIP:
-       - Junior Auditor / Audit Intern (KAP / Perusahaan)
-       - Tax Intern / Pajak
-       - Accounting / Finance Intern
-    3. Buat daftar rapi dan to the point:
-       - *Perusahaan / KAP*:
-       - *Posisi*:
-       - *Lokasi*:
-       - *Link Lamaran*: (ambil link linkedin atau url yang tertera)
-    4. Jika dalam 24 jam terakhir belum ada loker yang cocok di area Jabodetabek/Indonesia, jawab singkat:
-       "Belum ada update lowongan magang Audit/Tax baru untuk wilayah Jabodetabek pada sesi ini."
+    Daftar Tautan Resmi LinkedIn yang diekstrak:
+    \"\"\"{daftar_link}\"\"\"
 
-    Format pesan rapi menggunakan format WhatsApp (pakai asterisk *tebal*).
+    Tugasmu:
+    1. Saring lowongan khusus MAGANG/INTERN: Junior Auditor, Tax Intern, Accounting Staff di Indonesia (khususnya Jabodetabek).
+    2. Cocokkan posisi dan perusahaan dengan daftar tautan LinkedIn di atas.
+    3. Sajikan daftar rapi:
+       *Posisi*: ...
+       *Perusahaan / KAP*: ...
+       *Lokasi*: ...
+       *Link Lamaran*: (wajib sertakan link https://www.linkedin.com/jobs/view/... yang sesuai)
+    4. Jika belum ada loker yang cocok pada batch ini, tulis:
+       "Belum ada update lowongan magang Audit & Tax baru untuk wilayah Jabodetabek pada sesi ini."
     """
-    
-    # Otomatis fallback jika ada model yang sedang padat/503
+
     model_list = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-3.6-flash"]
     for model_name in model_list:
         try:
@@ -61,33 +69,39 @@ def kurasi_loker(data_mentah):
             )
             return response.text
         except Exception as e:
-            print(f"Model {model_name} sibuk, mencoba model lain...")
+            print(f"Model {model_name} sibuk ({e}), mencoba model lain...")
             time.sleep(2)
             
-    return "Server AI sedang padat sementara. Bot akan mengecek kembali pada jadwal berikutnya."
+    return "Server AI sedang sibuk sementara. Pengecekan akan diulang pada jadwal berikutnya."
 
 def main():
-    print("Mencari lowongan magang Audit & Tax (Jabodetabek / Indonesia)...")
-    mentah = cari_loker_linkedin()
-    hasil = kurasi_loker(mentah)
+    print("Mencari lowongan magang terbaru...")
+    html_mentah, daftar_link = cari_loker_linkedin()
+    hasil = kurasi_loker(html_mentah, daftar_link)
 
     pesan_wa = f"📢 *UPDATE LOKER MAGANG JABODETABEK (AUDIT & TAX)*\n\n{hasil}"
     
+    # 1. Kirim ke WhatsApp
     try:
-        requests.post(
+        res_wa = requests.post(
             "https://api.fonnte.com/send",
             headers={"Authorization": FONNTE_TOKEN},
             data={"target": ID_GRUP_WA, "message": pesan_wa}
         )
-        print("Terkirim ke WhatsApp!")
+        print("Respon Fonnte WA:", res_wa.text)
     except Exception as e:
         print("Error WA:", e)
 
+    # 2. Kirim ke ntfy HP lengkap dengan isi dan tautannya
     try:
         requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
-            data="Loker baru Jabodetabek (Audit & Tax) sudah dicek!".encode("utf-8"),
-            headers={"Title": "Update Loker Magang Jabodetabek!".encode("utf-8")}
+            data=hasil.encode("utf-8"),
+            headers={
+                "Title": "📢 Loker Magang Audit & Tax".encode("utf-8"),
+                "Priority": "default",
+                "Tags": "briefcase"
+            }
         )
         print("Terkirim ke ntfy!")
     except Exception as e:

@@ -15,8 +15,8 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 def ambil_poster_dan_loker():
     """
-    Mengambil data dari saluran publik penyebar flyer/poster lowongan kerja
-    serta portal LinkedIn.
+    Mengambil data flyer/poster lowongan kerja dan data LinkedIn 
+    dengan fokus utama KAP dan Kantor Konsultan Pajak (KKP).
     """
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -25,7 +25,7 @@ def ambil_poster_dan_loker():
     daftar_gambar = []
     daftar_teks = []
 
-    # 1. Scraping channel penyebar poster gambar loker
+    # 1. Saluran publik penyebar poster loker
     sumber_saluran = [
         "https://t.me/s/disnakerja",
         "https://t.me/s/lokernastelegram"
@@ -40,15 +40,15 @@ def ambil_poster_dan_loker():
                 for img_url in img_matches:
                     if any(ext in img_url.lower() for ext in ['.jpg', '.jpeg', '.png', 'cdn4', 'telesco']):
                         daftar_gambar.append(img_url)
-                daftar_teks.append(html[:3000])
+                daftar_teks.append(html[:3500])
         except Exception as e:
             print(f"Gagal mengambil dari {url}: {e}")
 
-    # 2. Ambil dari LinkedIn
+    # 2. Ambil dari LinkedIn dengan kata kunci fokus KAP & Konsultan Pajak
     try:
         url_linkedin = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
         params = {
-            "keywords": "Internship Junior Auditor Tax Accounting",
+            "keywords": "Internship KAP Kantor Akuntan Publik Junior Auditor Tax Consultant",
             "location": "Greater Jakarta Area, Indonesia",
             "f_TPR": "r86400",
             "start": 0
@@ -57,7 +57,7 @@ def ambil_poster_dan_loker():
         if resp_li.status_code == 200:
             html_li = resp_li.text
             job_ids = list(dict.fromkeys(re.findall(r'jobPosting:(\d+)', html_li)))
-            for jid in job_ids[:5]:
+            for jid in job_ids[:6]:
                 daftar_teks.append(f"LinkedIn Job ID: {jid} -> https://www.linkedin.com/jobs/view/{jid}")
     except Exception as e:
         print("Gagal LinkedIn:", e)
@@ -68,25 +68,27 @@ def ambil_poster_dan_loker():
 def baca_poster_dan_kurasi(daftar_gambar_urls, teks_pendukung):
     prompt_instruksi = f"""
     Kamu adalah asisten karir akuntansi & perpajakan tingkat lanjut dengan kemampuan vision.
-    Tugas utamamu: BACA TULISAN DI DALAM GAMBAR POSTER / FLYER LOWONGAN yang terlampir di bawah ini!
+    Tugas utamamu: BACA DAN ANALISIS POSTER/FLYER LOWONGAN serta data lowongan yang terlampir.
 
-    ATURAN KURASI KETAT:
-    1. Periksa setiap gambar flyer/poster lowongan yang diberikan. Baca semua teks yang tertera di poster (OCR):
-       - Posisi yang dibuka (fokus utama: Magang / Internship Junior Auditor, Tax Intern, Accounting Staff di Jabodetabek / Indonesia)
-       - Nama Kantor Akuntan Publik (KAP) atau Perusahaan
-       - Kualifikasi penting (Jurusan, IPK, syarat keahlian)
-       - Kontak Pendaftaran (Email kirim CV, subjek email, atau form link pendaftaran di poster)
-       - Batas Akhir / Deadline pendaftaran jika tertulis di poster
-    2. Jika poster bukan tentang audit/pajak/akuntansi, lewati poster tersebut.
-    3. Sajikan format pesan rapi siap baca di WhatsApp:
-       📋 *[NAMA POSISI & PERUSAHAAN/KAP]*
+    PRIORITAS UTAMA & ATURAN FILTERING:
+    1. UTAMAKAN lowongan magang / internship dari:
+       - Kantor Akuntan Publik (KAP) -> Posisi: Junior Auditor Intern / Audit Assistant / Audit Intern.
+       - Kantor Konsultan Pajak (KKP) atau Divisi Tax Consulting -> Posisi: Tax Intern / Tax Consultant Assistant / Tax Compliance Intern.
+       - Jika tidak ada KAP/KKP, baru tampilkan lowongan magang internal audit / corporate tax / accounting di perusahaan/BUMN.
+    2. WILAYAH: Khusus INDONESIA, diprioritaskan JABODETABEK (Jakarta, Bogor, Depok, Tangerang, Bekasi, atau Remote).
+    3. PEMBACAAN POSTER GAMBAR:
+       - Baca seluruh teks di gambar flyer/poster (OCR).
+       - Ekstrak: Nama KAP/KKP/Perusahaan, Posisi, Kualifikasi utama (IPK/semester/jurusan/software), Kontak pendaftaran (Email kirim CV, subjek email resmi, atau link form pendaftaran), dan Batas Akhir (Deadline).
+    4. FORMAT PESAN WHATSAPP:
+       📋 *[NAMA POSISI & KAP / KKP / PERUSAHAAN]*
+       • *Tipe*: (KAP / Konsultan Pajak / Korporat)
        • *Wilayah*: ...
        • *Kualifikasi Penting*: ...
-       • *Cara Lamar / Email*: ...
+       • *Cara Lamar / Email CV*: ...
        • *Batas Waktu*: ...
-       • *Sumber*: (Berdasarkan poster / tautan LinkedIn)
-    4. Jika pada sesi ini belum ada poster atau loker magang audit/tax baru, tulis:
-       "Belum ada update poster atau loker magang Audit & Tax baru untuk wilayah Jabodetabek pada sesi ini."
+       • *Sumber*: (Poster Flyer / LinkedIn: cantumkan tautan terkait)
+    5. Jika belum ada yang cocok pada sesi pengecekan ini, cukup jawab:
+       "Belum ada update lowongan magang baru di KAP / Konsultan Pajak untuk wilayah Jabodetabek pada sesi ini."
 
     Data Teks Tambahan:
     \"\"\"{teks_pendukung[:2500]}\"\"\"
@@ -94,7 +96,6 @@ def baca_poster_dan_kurasi(daftar_gambar_urls, teks_pendukung):
 
     contents = [prompt_instruksi]
 
-    # Unduh gambar poster dan masukkan ke Gemini Vision
     total_poster = 0
     for img_url in daftar_gambar_urls:
         try:
@@ -103,13 +104,12 @@ def baca_poster_dan_kurasi(daftar_gambar_urls, teks_pendukung):
                 img = Image.open(io.BytesIO(res_img.content))
                 contents.append(img)
                 total_poster += 1
-                print(f"Berhasil mengunduh poster: {img_url}")
+                print(f"Berhasil memproses poster: {img_url}")
         except Exception as e:
             print(f"Gagal memproses gambar: {e}")
 
-    print(f"Total poster yang dikirim ke AI: {total_poster} gambar")
+    print(f"Total poster yang dianalisis vision: {total_poster}")
 
-    # Menggunakan Gemini 3.8 Flash sebagai pilihan utama dan 3.5 Flash sebagai cadangan
     model_list = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.6-flash"]
     for model_name in model_list:
         try:
@@ -125,11 +125,11 @@ def baca_poster_dan_kurasi(daftar_gambar_urls, teks_pendukung):
     return "Server AI sedang sibuk sementara. Pengecekan akan diulang otomatis pada jadwal berikutnya."
 
 def main():
-    print("Mencari info lowongan dan memindai poster flyer...")
+    print("Mencari lowongan magang KAP & Konsultan Pajak serta memindai poster...")
     daftar_gambar, teks_pendukung = ambil_poster_dan_loker()
     hasil = baca_poster_dan_kurasi(daftar_gambar, teks_pendukung)
 
-    pesan_wa = f"📢 *UPDATE LOKER & HASIL BACA POSTER (AUDIT & TAX)*\n\n{hasil}"
+    pesan_wa = f"📢 *UPDATE LOKER MAGANG KAP & KONSULTAN PAJAK (JABODETABEK)*\n\n{hasil}"
 
     # 1. Kirim ke WhatsApp
     try:
@@ -150,7 +150,7 @@ def main():
             f"https://ntfy.sh/{NTFY_TOPIC}",
             data=hasil.encode("utf-8"),
             headers={
-                "Title": "📢 Update Hasil Baca Poster Loker".encode("utf-8"),
+                "Title": "📢 Update Loker Magang KAP & Pajak".encode("utf-8"),
                 "Priority": "default",
                 "Tags": "briefcase"
             },

@@ -2,6 +2,7 @@ import io
 import json
 import os
 import requests
+from http.server import BaseHTTPRequestHandler
 from PIL import Image
 from google import genai
 
@@ -15,14 +16,13 @@ def kirim_balasan(chat_id, teks):
     payload = {"chat_id": chat_id, "text": teks}
     requests.post(url, json=payload, timeout=10)
 
-def handler(request):
-    if request.method == "POST":
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(content_length).decode("utf-8")
+        
         try:
-            body = request.body
-            if isinstance(body, bytes):
-                body = body.decode("utf-8")
             update = json.loads(body)
-            
             if "message" in update:
                 msg = update["message"]
                 chat_id = msg["chat"]["id"]
@@ -41,7 +41,7 @@ def handler(request):
                     )
                     kirim_balasan(chat_id, response.text)
 
-                # Kasus 2: Gambar flyer loker
+                # Kasus 2: Kirim poster / gambar loker
                 elif "photo" in msg:
                     file_id = msg["photo"][-1]["file_id"]
                     file_info = requests.get(
@@ -68,10 +68,15 @@ def handler(request):
                     kirim_balasan(chat_id, response.text)
 
         except Exception as e:
-            print("Error processing webhook:", e)
+            print("Error handling webhook:", e)
 
-    return {
-        "statusCode": 200,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps({"status": "ok"})
-    }
+        self.send_response(200)
+        self.send_header("Content-type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"Bot Webhook Ready")

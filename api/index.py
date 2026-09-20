@@ -13,70 +13,84 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 
 def kirim_balasan(chat_id, teks):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": chat_id, "text": teks}
-    requests.post(url, json=payload, timeout=10)
+    payload = {
+        "chat_id": chat_id,
+        "text": teks
+    }
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except Exception as e:
+        print("Gagal kirim ke Telegram:", e)
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length).decode("utf-8")
-        
         try:
-            update = json.loads(body)
+            content_length = int(self.headers.get("Content-Length", 0))
+            post_data = self.rfile.read(content_length)
+            
+            if not post_data:
+                self.send_response(200)
+                self.end_headers()
+                return
+
+            update = json.loads(post_data.decode("utf-8"))
+
             if "message" in update:
                 msg = update["message"]
-                chat_id = msg["chat"]["id"]
-                
-                # Kasus 1: Chat teks
-                if "text" in msg:
-                    user_text = msg["text"]
+                chat_id = msg.get("chat", {}).get("id")
+
+                # 1. Balas pesan teks
+                if "text" in msg and chat_id:
+                    teks_user = msg["text"]
                     prompt = f"""
                     Kamu adalah asisten karir audit, akuntansi, dan perpajakan untuk mahasiswa/fresh graduate.
-                    Jawab pertanyaan pengguna dengan ramah, lugas, dan praktis:
-                    "{user_text}"
+                    Jawab pertanyaan ini dengan santai, ramah, dan solutif:
+                    "{teks_user}"
                     """
                     response = client.models.generate_content(
                         model="gemini-2.5-flash",
-                        contents=[prompt]
+                        contents=prompt
                     )
                     kirim_balasan(chat_id, response.text)
 
-                # Kasus 2: Kirim poster / gambar loker
-                elif "photo" in msg:
+                # 2. Analisis foto poster loker
+                elif "photo" in msg and chat_id:
                     file_id = msg["photo"][-1]["file_id"]
-                    file_info = requests.get(
-                        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}"
+                    res_file = requests.get(
+                        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getFile?file_id={file_id}",
+                        timeout=10
                     ).json()
-                    file_path = file_info["result"]["file_path"]
-                    img_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
                     
-                    img_data = requests.get(img_url).content
-                    image = Image.open(io.BytesIO(img_data))
+                    file_path = res_file.get("result", {}).get("file_path")
+                    if file_path:
+                        img_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file_path}"
+                        img_bytes = requests.get(img_url, timeout=15).content
+                        gambar = Image.open(io.BytesIO(img_bytes))
 
-                    caption = msg.get("caption", "Ekstrak informasi penting dari poster ini.")
-                    prompt_vision = f"""
-                    Analisis poster loker ini dan rangkum:
-                    1. Posisi & Perusahaan/KAP
-                    2. Kualifikasi penting (jurusan, semester, keahlian)
-                    3. Cara melamar (email, deadline, subjek email)
-                    Instruksi tambahan pengguna: {caption}
-                    """
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[prompt_vision, image]
-                    )
-                    kirim_balasan(chat_id, response.text)
+                        caption = msg.get("caption", "Tolong bedah poster loker ini.")
+                        prompt_vision = f"""
+                        Analisis poster loker ini dan rangkum:
+                        1. Nama KAP / Instansi & Posisi yang dibuka
+                        2. Kualifikasi & Syarat utama
+                        3. Cara Melamar (Email/Link, Format Subjek, Deadline)
+                        Catatan tambahan user: {caption}
+                        """
+                        response = client.models.generate_content(
+                            model="gemini-2.5-flash",
+                            contents=[prompt_vision, gambar]
+                        )
+                        kirim_balasan(chat_id, response.text)
 
-        except Exception as e:
-            print("Error handling webhook:", e)
+        except Exception as err:
+            print("Error webhook:", err)
 
         self.send_response(200)
-        self.send_header("Content-type", "application/json")
+        self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps({"status": "ok"}).encode("utf-8"))
+        self.wfile.write(b'{"status":"ok"}')
 
     def do_GET(self):
         self.send_response(200)
-        self.send_header("Content-type", "text/plain")
+        self.send_header("Content-Type", "text/plain")
         self.end_headers()
         self.wfile.write(b"Bot Webhook Ready")

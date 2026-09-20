@@ -14,13 +14,12 @@ def kirim_balasan(chat_id, teks):
         "text": teks
     }
     try:
-        r = requests.post(url, json=payload, timeout=10)
-        print("Telegram send status:", r.status_code)
+        requests.post(url, json=payload, timeout=10)
     except Exception as e:
         print("Gagal kirim ke Telegram:", e)
 
 def tanya_gemini(prompt_teks):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
@@ -28,12 +27,17 @@ def tanya_gemini(prompt_teks):
         }]
     }
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=15)
+        res = requests.post(url, headers=headers, json=payload, timeout=25)
         data = res.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+        
+        if "candidates" in data and len(data["candidates"]) > 0:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        elif "error" in data:
+            pesan_err = data["error"].get("message", "Unknown error")
+            return f"Kendala API Google: {pesan_err}"
+        return "Respon API kosong dari server."
     except Exception as e:
-        print("Error Gemini:", e)
-        return "Maaf, sistem AI sedang sibuk. Coba ulangi beberapa saat lagi ya!"
+        return f"Error koneksi: {str(e)}"
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -52,14 +56,13 @@ class handler(BaseHTTPRequestHandler):
                 msg = update["message"]
                 chat_id = msg.get("chat", {}).get("id")
 
-                # Balas pesan teks
                 if "text" in msg and chat_id:
                     teks_user = msg["text"]
                     
                     if teks_user == "/start":
-                        kirim_balasan(chat_id, "Halo! Aku asisten karir audit & perpajakan. Kamu bisa tanya lowongan KAP, tips interview, atau review syarat loker di sini!")
+                        kirim_balasan(chat_id, "Halo! Aku asisten karir audit & perpajakan bertenaga Gemini 3.8 Flash. Mau cari info loker KAP apa hari ini?")
                     else:
-                        prompt = f"Kamu adalah asisten karir audit, akuntansi, dan pajak. Jawab pesan ini dengan santai, ramah, dan solutif: '{teks_user}'"
+                        prompt = f"Kamu adalah asisten karir audit, akuntansi, dan perpajakan untuk mahasiswa/fresh graduate. Jawab dengan ramah, santai, dan solutif: '{teks_user}'"
                         jawaban = tanya_gemini(prompt)
                         kirim_balasan(chat_id, jawaban)
 

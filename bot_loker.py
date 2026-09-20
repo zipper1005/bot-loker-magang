@@ -8,8 +8,8 @@ from PIL import Image
 from google import genai
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
-FONNTE_TOKEN = os.environ.get("FONNTE_TOKEN", "").strip()
-ID_GRUP_WA = "120363414007391391@g.us"
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
 NTFY_TOPIC = "Pengingat-Tugas"
 
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -22,7 +22,7 @@ def ambil_loker_feed_dan_jobs():
     daftar_teks = []
     daftar_gambar = []
 
-    # 1. Menjaring postingan feed LinkedIn publik (seperti Magang Info, HRD, KAP) lewat Google News/RSS
+    # 1. Postingan feed publik LinkedIn via RSS
     query = 'site:linkedin.com/posts ("internship" OR "magang") ("junior auditor" OR "tax" OR "accounting") ("KAP" OR "bdo" OR "pwc" OR "ey" OR "deloitte" OR "kpmg")'
     url_rss = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=id&gl=ID&ceid=ID:id"
     
@@ -32,9 +32,9 @@ def ambil_loker_feed_dan_jobs():
             titles = re.findall(r"<title>(.*?)</title>", res_rss.text)
             links = re.findall(r"<link>(.*?)</link>", res_rss.text)
             for t, l in zip(titles[1:8], links[1:8]):
-                daftar_teks.append(f"Postingan LinkedIn: {t}\nTautan: {l}")
+                daftar_teks.append(f"Postingan: {t}\nLink: {l}")
     except Exception as e:
-        print("Gagal RSS LinkedIn:", e)
+        print("Gagal RSS:", e)
 
     # 2. LinkedIn Guest Jobs resmi
     try:
@@ -77,25 +77,25 @@ def baca_dan_kurasi(daftar_gambar_urls, teks_pendukung):
 
     PRIORITAS UTAMA:
     1. Lowongan MAGANG / INTERNSHIP di:
-       - Kantor Akuntan Publik (KAP): Junior Auditor, Audit Intern, Accounting Intern (misal: BDO, Big 4, KAP lokal).
+       - Kantor Akuntan Publik (KAP): Junior Auditor, Audit Intern, Accounting Intern.
        - Kantor Konsultan Pajak (KKP) atau Divisi Tax: Tax Intern, Tax Compliance.
        - Corporate Finance/Accounting Intern di perusahaan Jabodetabek.
     2. Ekstrak data krusial:
        - Nama KAP / Instansi
        - Posisi
-       - Syarat/Kualifikasi (semester/jurusan)
-       - Email pengiriman berkas & format subjek email
+       - Syarat/Kualifikasi
+       - Email lamaran & format subjek email
        - Tautan postingan
-    3. FORMAT PESAN WHATSAPP:
-       📋 *[NAMA POSISI & KAP / PERUSAHAAN]*
-       • *Tipe*: (KAP / Konsultan Pajak / Korporat)
-       • *Kualifikasi*: ...
-       • *Cara Lamar / Email*: ...
-       • *Sumber / Link*: ...
+    3. FORMAT PESAN:
+       📋 [NAMA POSISI & KAP / PERUSAHAAN]
+       • Tipe: (KAP / Konsultan Pajak / Korporat)
+       • Kualifikasi: ...
+       • Cara Lamar / Email: ...
+       • Sumber / Link: ...
     4. Jika data kosong pada sesi ini, balas singkat:
        "Belum ada update lowongan magang baru di KAP / Konsultan Pajak untuk wilayah Jabodetabek pada sesi ini."
 
-    Data Teks Masuk:
+    Data Teks:
     \"\"\"{teks_pendukung[:4000]}\"\"\"
     """
 
@@ -120,23 +120,29 @@ def baca_dan_kurasi(daftar_gambar_urls, teks_pendukung):
 
     return "Belum ada update lowongan magang baru di KAP / Konsultan Pajak untuk wilayah Jabodetabek pada sesi ini."
 
+def kirim_ke_telegram(pesan):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": pesan
+    }
+    try:
+        res = requests.post(url, json=payload, timeout=15)
+        print("Respon Telegram:", res.text)
+    except Exception as e:
+        print("Error Telegram:", e)
+
 def main():
-    print("Mencari postingan feed dan portal lowongan...")
+    print("Mencari info lowongan dan memindai...")
     daftar_gambar, teks_pendukung = ambil_loker_feed_dan_jobs()
     hasil = baca_dan_kurasi(daftar_gambar, teks_pendukung)
 
-    pesan_wa = f"📢 *UPDATE LOKER MAGANG KAP & PAJAK (FEED & PORTAL)*\n\n{hasil}"
+    pesan_final = f"📢 UPDATE LOKER MAGANG KAP & PAJAK\n\n{hasil}"
 
-    try:
-        requests.post(
-            "https://api.fonnte.com/send",
-            headers={"Authorization": FONNTE_TOKEN.strip()},
-            data={"target": ID_GRUP_WA, "message": pesan_wa},
-            timeout=15
-        )
-    except Exception as e:
-        print("Error WA:", e)
+    # 1. Kirim ke Telegram Bot
+    kirim_ke_telegram(pesan_final)
 
+    # 2. Kirim ke ntfy
     try:
         requests.post(
             f"https://ntfy.sh/{NTFY_TOPIC}",
@@ -144,6 +150,7 @@ def main():
             headers={"Title": "Update Loker Magang KAP & Pajak".encode("utf-8")},
             timeout=15
         )
+        print("Terkirim ke ntfy!")
     except Exception as e:
         print("Error ntfy:", e)
 

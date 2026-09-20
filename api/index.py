@@ -19,25 +19,25 @@ def kirim_balasan(chat_id, teks):
         print("Gagal kirim ke Telegram:", e)
 
 def tanya_gemini(prompt_teks):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key={GEMINI_API_KEY}"
+    daftar_model = ["gemini-2.5-flash", "gemini-1.5-flash"]
     headers = {"Content-Type": "application/json"}
     payload = {
         "contents": [{
             "parts": [{"text": prompt_teks}]
         }]
     }
-    try:
-        res = requests.post(url, headers=headers, json=payload, timeout=25)
-        data = res.json()
-        
-        if "candidates" in data and len(data["candidates"]) > 0:
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        elif "error" in data:
-            pesan_err = data["error"].get("message", "Unknown error")
-            return f"Kendala API Google: {pesan_err}"
-        return "Respon API kosong dari server."
-    except Exception as e:
-        return f"Error koneksi: {str(e)}"
+
+    for model in daftar_model:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_API_KEY}"
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=20)
+            data = res.json()
+            if "candidates" in data and len(data["candidates"]) > 0:
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+        except Exception:
+            continue
+
+    return "Server AI sedang sibuk sementara. Silakan kirim ulang pesanmu dalam beberapa detik ya!"
 
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
@@ -60,9 +60,9 @@ class handler(BaseHTTPRequestHandler):
                     teks_user = msg["text"]
                     
                     if teks_user == "/start":
-                        kirim_balasan(chat_id, "Halo! Aku asisten karir audit & perpajakan bertenaga Gemini 3.8 Flash. Mau cari info loker KAP apa hari ini?")
+                        kirim_balasan(chat_id, "Halo! Aku asisten karir audit & perpajakan. Mau tanya tips interview, review CV, atau info lowongan KAP apa hari ini?")
                     else:
-                        prompt = f"Kamu adalah asisten karir audit, akuntansi, dan perpajakan untuk mahasiswa/fresh graduate. Jawab dengan ramah, santai, dan solutif: '{teks_user}'"
+                        prompt = f"Kamu asisten karir audit, akuntansi, dan perpajakan untuk mahasiswa/fresh graduate. Jawab ramah, santai, dan to the point: '{teks_user}'"
                         jawaban = tanya_gemini(prompt)
                         kirim_balasan(chat_id, jawaban)
 

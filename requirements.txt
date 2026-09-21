@@ -1,3 +1,4 @@
-requests
-pillow
 google-genai
+requests
+feedparser
+pillow

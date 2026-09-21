@@ -5,20 +5,20 @@ from datetime import datetime, timezone
 import email.utils
 import xml.etree.ElementTree as ET
 import requests
-from google import genai
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8932857674").strip()
 NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 
-client = genai.Client(api_key=GEMINI_API_KEY)
-
+# Target langsung portal kerja dan kata kunci magang audit/pajak 30 hari terakhir
 QUERIES = [
-    '"internship" "junior auditor" KAP Jabodetabek when:30d',
-    '"tax intern" konsultan pajak Jakarta when:30d',
-    '"magang audit" KAP Jakarta Bogor when:30d',
-    '"intern" "auditor" KAP when:30d'
+    'site:linkedin.com/jobs ("magang" OR "internship") ("audit" OR "tax" OR "KAP") Jakarta when:30d',
+    'site:id.jobstreet.com/id/job ("magang" OR "internship") ("audit" OR "tax" OR "pajak") when:30d',
+    'site:glints.com/id/opportunities/jobs ("intern" OR "magang") ("audit" OR "pajak" OR "tax") when:30d',
+    '"lowongan magang" ("KAP" OR "kantor akuntan publik" OR "konsultan pajak") Jabodetabek when:30d',
+    'magang "junior auditor" KAP Jakarta when:30d',
+    'internship "tax" konsultan pajak Jakarta when:30d'
 ]
 
 def is_recent(published_str, max_days=30):
@@ -35,7 +35,7 @@ def ambil_loker_rss():
     hasil = []
     seen_links = set()
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 
     for q in QUERIES:
@@ -72,37 +72,52 @@ def ambil_loker_rss():
 
 def kurasi_dengan_gemini(daftar_loker):
     if not daftar_loker:
-        return "Tidak ada lowongan magang KAP/Pajak yang valid dalam 30 hari terakhir."
+        return "Tidak ada lowongan magang KAP/Pajak yang terdeteksi dalam 30 hari terakhir."
 
-    data_teks = json.dumps(daftar_loker[:15], indent=2)
+    data_teks = json.dumps(daftar_loker[:25], indent=2)
     prompt = f"""
-    Kamu adalah kurator karir spesialis akuntansi, audit (KAP), dan perpajakan.
-    Tugasmu memvalidasi data lowongan berikut:
+    Kamu adalah kurator karir spesialis akuntansi, audit (KAP), dan perpajakan di Indonesia.
+    Tugasmu memvalidasi data temuan lowongan kerja/magang berikut:
     {data_teks}
 
-    ATURAN KETAT:
-    1. HANYA ambil lowongan yang AKTIF dan dirilis maksimal 30 hari terakhir.
-    2. ABAIKAN berita umum, artikel opini, loker kedaluwarsa, atau postingan tahun lalu.
-    3. Format tiap lowongan yang lolos kurasi:
-       - Posisi & KAP / Perusahaan
-       - Lokasi (Jabodetabek diutamakan)
-       - Ringkasan Syarat
-       - Link Lamaran
+    ATURAN KURASI:
+    1. Ambil posisi yang relevan dengan: Magang / Intern / Junior Auditor di KAP, Tax Intern di Konsultan Pajak, atau Staff Akuntansi/Pajak entry-level.
+    2. Abaikan berita umum, artikel opini, kursus berbayar, atau postingan yang jelas-jelas bukan lowongan kerja.
+    3. Format tiap lowongan yang valid:
+       - 📌 **Posisi & Instansi/KAP**: [Nama Posisi] - [Nama Perusahaan/KAP]
+       - 📍 **Lokasi**: [Jabodetabek / Kota / WFH]
+       - 📝 **Ringkasan Syarat**: [Pendidikan / Kemampuan utama]
+       - 🔗 **Link Info/Loker**: [Tautkan link asli dari data]
 
-    Jika tidak ada yang sesuai kriteria magang audit/pajak 30 hari terakhir, tulis persis:
-    "Tidak ada lowongan magang KAP/Pajak yang valid dalam 30 hari terakhir."
+    Jika dari daftar tersebut tidak ada satupun posisi audit/pajak yang valid, tulis:
+    "Belum ada rilis lowongan magang KAP/Pajak baru yang valid pada portal kerja dalam 30 hari terakhir."
     """
     
-    response = client.models.generate_content(
-        model="gemini-3.6-flash",
-        contents=prompt
-    )
-    return response.text
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=30)
+        data = res.json()
+        if "candidates" in data and len(data["candidates"]) > 0:
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        elif "error" in data:
+            return f"Kendala API Gemini: {data['error'].get('message', 'Tidak diketahui')}"
+        return "Respon kurasi kosong dari server AI."
+    except Exception as e:
+        return f"Gagal memproses kurasi AI: {str(e)}"
 
 def kirim_notifikasi(pesan):
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url_tele = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": pesan}
+        payload = {
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": pesan,
+            "disable_web_page_preview": True
+        }
         try:
             requests.post(url_tele, json=payload, timeout=15)
         except Exception as e:
@@ -115,15 +130,15 @@ def kirim_notifikasi(pesan):
             print("Gagal kirim ntfy:", e)
 
 def main():
-    print("Mencari lowongan magang 30 hari terakhir...")
+    print("Mencari lowongan magang portal kerja 30 hari terakhir...")
     data_mentah = ambil_loker_rss()
-    print(f"Ditemukan {len(data_mentah)} data berumur <= 30 hari.")
+    print(f"Ditemukan {len(data_mentah)} postingan baru.")
     
     hasil_kurasi = kurasi_dengan_gemini(data_mentah)
-    pesan_akhir = f"📌 UPDATE LOKER AUDIT & PAJAK (MAKS. 30 HARI TERAKHIR)\n\n{hasil_kurasi}"
+    pesan_akhir = f"📢 UPDATE LOKER AUDIT & PAJAK (PORTAL KERJA 30 HARI TERAKHIR)\n\n{hasil_kurasi}"
     
     kirim_notifikasi(pesan_akhir)
-    print("Selesai dikirim.")
+    print("Selesai diproses dan dikirim.")
 
 if __name__ == "__main__":
     main()

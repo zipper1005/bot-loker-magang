@@ -16,7 +16,7 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Kunci pencarian maksimal 30 hari (1 bulan) terakhir via Google News RSS
+# Kunci pencarian maksimal 30 hari terakhir
 QUERIES = [
     '"internship" "junior auditor" KAP Jabodetabek when:30d',
     '"tax intern" konsultan pajak Jakarta when:30d',
@@ -47,7 +47,6 @@ def ambil_loker_rss():
             title = getattr(entry, "title", "")
             pub_date = getattr(entry, "published", "")
 
-            # Filter mutlak: buang postingan yang lebih tua dari 30 hari
             if pub_date and not is_recent(pub_date, max_days=30):
                 continue
 
@@ -62,7 +61,7 @@ def ambil_loker_rss():
 
 def kurasi_dengan_gemini(daftar_loker):
     if not daftar_loker:
-        return "Tidak ditemukan lowongan baru dalam 30 hari terakhir."
+        return "Tidak ada lowongan magang KAP/Pajak yang valid dalam 30 hari terakhir."
 
     data_teks = json.dumps(daftar_loker[:15], indent=2)
     prompt = f"""
@@ -90,7 +89,6 @@ def kurasi_dengan_gemini(daftar_loker):
     return response.text
 
 def kirim_notifikasi(pesan):
-    # Kirim ke Telegram
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         url_tele = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
         payload = {"chat_id": TELEGRAM_CHAT_ID, "text": pesan}
@@ -99,10 +97,25 @@ def kirim_notifikasi(pesan):
         except Exception as e:
             print("Gagal kirim Telegram:", e)
 
-    # Kirim ke ntfy jika dikonfigurasi
     if NTFY_TOPIC:
         try:
             requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=pesan.encode("utf-8"), timeout=15)
+        except Exception as e:
+            print("Gagal kirim ntfy:", e)
+
+def main():
+    print("Mencari lowongan magang 30 hari terakhir...")
+    data_mentah = ambil_loker_rss()
+    print(f"Ditemukan {len(data_mentah)} data berumur <= 30 hari.")
+    
+    hasil_kurasi = kurasi_dengan_gemini(data_mentah)
+    pesan_akhir = f"📌 UPDATE LOKER AUDIT & PAJAK (MAKS. 30 HARI TERAKHIR)\n\n{hasil_kurasi}"
+    
+    kirim_notifikasi(pesan_akhir)
+    print("Selesai dikirim.")
+
+if __name__ == "__main__":
+    main()
         except Exception as e:
             print("Gagal kirim ntfy:", e)
 

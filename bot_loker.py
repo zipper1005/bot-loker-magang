@@ -14,7 +14,6 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Kunci pencarian maksimal 30 hari terakhir
 QUERIES = [
     '"internship" "junior auditor" KAP Jabodetabek when:30d',
     '"tax intern" konsultan pajak Jakarta when:30d',
@@ -46,7 +45,6 @@ def ambil_loker_rss():
             if res.status_code != 200:
                 continue
 
-            # Parsing XML bawaan Python tanpa butuh feedparser
             root = ET.fromstring(res.content)
             for item in root.findall("./channel/item"):
                 title_elem = item.find("title")
@@ -57,7 +55,6 @@ def ambil_loker_rss():
                 link = link_elem.text if link_elem is not None else ""
                 pub_date = pub_elem.text if pub_elem is not None else ""
 
-                # Filter batas waktu 30 hari
                 if pub_date and not is_recent(pub_date, max_days=30):
                     continue
 
@@ -69,7 +66,7 @@ def ambil_loker_rss():
                         "published": pub_date
                     })
         except Exception as e:
-            print(f"Gagal mengambil RSS untuk query '{q}':", e)
+            print(f"Gagal mengambil RSS: {e}")
 
     return hasil
 

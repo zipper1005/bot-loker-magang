@@ -3,7 +3,7 @@ import json
 import urllib.parse
 from datetime import datetime, timezone
 import email.utils
-import feedparser
+import xml.etree.ElementTree as ET
 import requests
 from google import genai
 
@@ -14,6 +14,7 @@ NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+# Kunci pencarian maksimal 30 hari terakhir
 QUERIES = [
     '"internship" "junior auditor" KAP Jabodetabek when:30d',
     '"tax intern" konsultan pajak Jakarta when:30d',
@@ -34,26 +35,42 @@ def is_recent(published_str, max_days=30):
 def ambil_loker_rss():
     hasil = []
     seen_links = set()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
 
     for q in QUERIES:
         url = f"https://news.google.com/rss/search?q={urllib.parse.quote(q)}&hl=id&gl=ID&ceid=ID:id"
-        feed = feedparser.parse(url)
-        
-        for entry in feed.entries:
-            link = getattr(entry, "link", "")
-            title = getattr(entry, "title", "")
-            pub_date = getattr(entry, "published", "")
-
-            if pub_date and not is_recent(pub_date, max_days=30):
+        try:
+            res = requests.get(url, headers=headers, timeout=15)
+            if res.status_code != 200:
                 continue
 
-            if link and link not in seen_links:
-                seen_links.add(link)
-                hasil.append({
-                    "title": title,
-                    "link": link,
-                    "published": pub_date
-                })
+            # Parsing XML bawaan Python tanpa butuh feedparser
+            root = ET.fromstring(res.content)
+            for item in root.findall("./channel/item"):
+                title_elem = item.find("title")
+                link_elem = item.find("link")
+                pub_elem = item.find("pubDate")
+
+                title = title_elem.text if title_elem is not None else ""
+                link = link_elem.text if link_elem is not None else ""
+                pub_date = pub_elem.text if pub_elem is not None else ""
+
+                # Filter batas waktu 30 hari
+                if pub_date and not is_recent(pub_date, max_days=30):
+                    continue
+
+                if link and link not in seen_links:
+                    seen_links.add(link)
+                    hasil.append({
+                        "title": title,
+                        "link": link,
+                        "published": pub_date
+                    })
+        except Exception as e:
+            print(f"Gagal mengambil RSS untuk query '{q}':", e)
+
     return hasil
 
 def kurasi_dengan_gemini(daftar_loker):

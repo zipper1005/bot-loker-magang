@@ -1,108 +1,124 @@
-import io
 import os
-import re
-import time
+import io
+import json
 import urllib.parse
+from datetime import datetime, timezone
+import email.utils
+import feedparser
 import requests
 from PIL import Image
 from google import genai
 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "").strip()
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-NTFY_TOPIC = "Pengingat-Tugas"
+TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "8932857674").strip()
+NTFY_TOPIC = os.environ.get("NTFY_TOPIC", "").strip()
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-def ambil_loker_feed_dan_jobs():
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    }
-    
-    daftar_teks = []
-    daftar_gambar = []
+# Kunci pencarian maksimal 30 hari (1 bulan) terakhir via Google News RSS
+QUERIES = [
+    '"internship" "junior auditor" KAP Jabodetabek when:30d',
+    '"tax intern" konsultan pajak Jakarta when:30d',
+    '"magang audit" KAP Jakarta Bogor when:30d',
+    '"intern" "auditor" KAP when:30d'
+]
 
-    # 1. Postingan feed publik LinkedIn via RSS
-    query = 'site:linkedin.com/posts ("internship" OR "magang") ("junior auditor" OR "tax" OR "accounting") ("KAP" OR "bdo" OR "pwc" OR "ey" OR "deloitte" OR "kpmg")'
-    url_rss = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=id&gl=ID&ceid=ID:id"
-    
+def is_recent(published_str, max_days=30):
     try:
-        res_rss = requests.get(url_rss, headers=headers, timeout=12)
-        if res_rss.status_code == 200:
-            titles = re.findall(r"<title>(.*?)</title>", res_rss.text)
-            links = re.findall(r"<link>(.*?)</link>", res_rss.text)
-            for t, l in zip(titles[1:8], links[1:8]):
-                daftar_teks.append(f"Postingan: {t}\nLink: {l}")
-    except Exception as e:
-        print("Gagal RSS:", e)
+        parsed_tuple = email.utils.parsedate_to_datetime(published_str)
+        now = datetime.now(timezone.utc)
+        if (now - parsed_tuple).days <= max_days:
+            return True
+        return False
+    except Exception:
+        return True
 
-    # 2. LinkedIn Guest Jobs resmi
-    try:
-        url_linkedin = "https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-        params = {
-            "keywords": "Internship KAP Kantor Akuntan Publik Junior Auditor Tax Consultant",
-            "location": "Greater Jakarta Area, Indonesia",
-            "f_TPR": "r86400",
-            "start": 0
-        }
-        resp_li = requests.get(url_linkedin, params=params, headers=headers, timeout=12)
-        if resp_li.status_code == 200:
-            job_ids = list(dict.fromkeys(re.findall(r'jobPosting:(\d+)', resp_li.text)))
-            for jid in job_ids[:5]:
-                daftar_teks.append(f"Tiket Jobs: https://www.linkedin.com/jobs/view/{jid}")
-    except Exception as e:
-        print("Gagal Jobs API:", e)
+def ambil_loker_rss():
+    hasil = []
+    seen_links = set()
 
-    # 3. Saluran publik flyer/poster loker
-    sumber_saluran = ["https://t.me/s/disnakerja", "https://t.me/s/lokernastelegram"]
-    for url in sumber_saluran:
-        try:
-            resp = requests.get(url, headers=headers, timeout=12)
-            if resp.status_code == 200:
-                img_matches = re.findall(r"background-image:url\('(https://[^\'\)]+)'\)", resp.text)
-                for img_url in img_matches:
-                    if any(ext in img_url.lower() for ext in ['.jpg', '.jpeg', '.png', 'cdn4', 'telesco']):
-                        daftar_gambar.append(img_url)
-                daftar_teks.append(resp.text[:3000])
-        except Exception:
-            pass
+    for q in QUERIES:
+        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(q)}&hl=id&gl=ID&ceid=ID:id"
+        feed = feedparser.parse(url)
+        
+        for entry in feed.entries:
+            link = getattr(entry, "link", "")
+            title = getattr(entry, "title", "")
+            pub_date = getattr(entry, "published", "")
 
-    daftar_gambar = list(dict.fromkeys(daftar_gambar))[:3]
-    return daftar_gambar, "\n".join(daftar_teks)
+            # Filter mutlak: buang postingan yang lebih tua dari 30 hari
+            if pub_date and not is_recent(pub_date, max_days=30):
+                continue
 
-def baca_dan_kurasi(daftar_gambar_urls, teks_pendukung):
-    prompt_instruksi = f"""
-    Kamu adalah asisten karir akuntansi & perpajakan dengan kemampuan vision.
-    Tugasmu menganalisis postingan feed, tiket lowongan, dan poster yang terlampir.
+            if link and link not in seen_links:
+                seen_links.add(link)
+                hasil.append({
+                    "title": title,
+                    "link": link,
+                    "published": pub_date
+                })
+    return hasil
 
-    PRIORITAS UTAMA:
-    1. Lowongan MAGANG / INTERNSHIP di:
-       - Kantor Akuntan Publik (KAP): Junior Auditor, Audit Intern, Accounting Intern.
-       - Kantor Konsultan Pajak (KKP) atau Divisi Tax: Tax Intern, Tax Compliance.
-       - Corporate Finance/Accounting Intern di perusahaan Jabodetabek.
-    2. Ekstrak data krusial:
-       - Nama KAP / Instansi
-       - Posisi
-       - Syarat/Kualifikasi
-       - Email lamaran & format subjek email
-       - Tautan postingan
-    3. FORMAT PESAN:
-       📋 [NAMA POSISI & KAP / PERUSAHAAN]
-       • Tipe: (KAP / Konsultan Pajak / Korporat)
-       • Kualifikasi: ...
-       • Cara Lamar / Email: ...
-       • Sumber / Link: ...
-    4. Jika data kosong pada sesi ini, balas singkat:
-       "Belum ada update lowongan magang baru di KAP / Konsultan Pajak untuk wilayah Jabodetabek pada sesi ini."
+def kurasi_dengan_gemini(daftar_loker):
+    if not daftar_loker:
+        return "Tidak ditemukan lowongan baru dalam 30 hari terakhir."
 
-    Data Teks:
-    \"\"\"{teks_pendukung[:4000]}\"\"\"
+    data_teks = json.dumps(daftar_loker[:15], indent=2)
+    prompt = f"""
+    Kamu adalah kurator karir spesialis akuntansi, audit (KAP), dan perpajakan.
+    Tugasmu memvalidasi data lowongan berikut:
+    {data_teks}
+
+    ATURAN KETAT:
+    1. HANYA ambil lowongan yang AKTIF dan dirilis maksimal 30 hari terakhir.
+    2. ABAIKAN berita umum, artikel opini, loker kedaluwarsa, atau postingan lama tahun-tahun lalu.
+    3. Format tiap lowongan yang lolos kurasi:
+       - Posisi & KAP / Perusahaan
+       - Lokasi (Jabodetabek diutamakan)
+       - Ringkasan Syarat
+       - Link Lamaran
+
+    Jika tidak ada yang sesuai kriteria magang audit/pajak 30 hari terakhir, tulis persis:
+    "Tidak ada lowongan magang KAP/Pajak yang valid dalam 30 hari terakhir."
     """
+    
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
+    )
+    return response.text
 
-    contents = [prompt_instruksi]
-
-    for img_url in daftar_gambar_urls:
+def kirim_notifikasi(pesan):
+    # Kirim ke Telegram
+    if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
+        url_tele = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {"chat_id": TELEGRAM_CHAT_ID, "text": pesan}
         try:
+            requests.post(url_tele, json=payload, timeout=15)
+        except Exception as e:
+            print("Gagal kirim Telegram:", e)
+
+    # Kirim ke ntfy jika dikonfigurasi
+    if NTFY_TOPIC:
+        try:
+            requests.post(f"https://ntfy.sh/{NTFY_TOPIC}", data=pesan.encode("utf-8"), timeout=15)
+        except Exception as e:
+            print("Gagal kirim ntfy:", e)
+
+def main():
+    print("Mencari lowongan magang 30 hari terakhir...")
+    data_mentah = ambil_loker_rss()
+    print(f"Ditemukan {len(data_mentah)} data berumur <= 30 hari.")
+    
+    hasil_kurasi = kurasi_dengan_gemini(data_mentah)
+    pesan_akhir = f"📌 UPDATE LOKER AUDIT & PAJAK (MAKS. 30 HARI TERAKHIR)\n\n{hasil_kurasi}"
+    
+    kirim_notifikasi(pesan_akhir)
+    print("Selesai dikirim.")
+
+if __name__ == "__main__":
+    main()
             res_img = requests.get(img_url, timeout=10)
             if res_img.status_code == 200 and len(res_img.content) > 15000:
                 contents.append(Image.open(io.BytesIO(res_img.content)))

@@ -2,12 +2,13 @@ name: Bot Loker Otomatis
 
 on:
   schedule:
-    - cron: '0 2,5,11 * * *'  # Berjalan otomatis: 09.00, 12.00, 18.00 WIB
-  workflow_dispatch:           # Memungkinkan tombol 'Run workflow' manual
+    - cron: '0 1 * * *' # Berjalan otomatis setiap jam 08.00 WIB
+  workflow_dispatch:     # Tombol manual Run workflow
 
 jobs:
   jalankan-bot:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -19,12 +20,14 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          pip install requests google-genai pillow
+          python -m pip install --upgrade pip
+          pip install google-genai requests feedparser pillow
 
       - name: Jalankan Script Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           python bot_loker.py
